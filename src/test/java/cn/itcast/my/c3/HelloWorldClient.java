@@ -9,6 +9,7 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import lombok.extern.slf4j.Slf4j;
@@ -27,17 +28,14 @@ import java.util.Random;
 public class HelloWorldClient {
     public static void main(String[] args) {
 
+
+
         //一次一次发.发一次断开一次连接，效率低
-      /*  for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 10; i++) {
             send();
-        }*/
+        }
 
 
-        //FixedLengthFrameDecoder
-         send3();
-
-        //LineBasedFrameDecoder
-        //send4();
 
     }
 
@@ -60,7 +58,11 @@ public class HelloWorldClient {
         return bytes;
     }
 
-    private static void send4() {
+    /**
+     * 固定分隔符
+     */
+    @Test
+    public  void LineBasedSend() {
         NioEventLoopGroup worker = new NioEventLoopGroup();
         try {
             Bootstrap bootstrap = new Bootstrap();
@@ -68,27 +70,82 @@ public class HelloWorldClient {
             bootstrap.group(worker);
             bootstrap.handler(new ChannelInitializer<SocketChannel>() {
                 @Override
-                protected void initChannel(SocketChannel ch) {
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    log.debug("connetted...");
                     ch.pipeline().addLast(new LoggingHandler(LogLevel.DEBUG));
                     ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
-                        // 会在连接 channel 建立成功后，会触发 active 事件
                         @Override
-                        public void channelActive(ChannelHandlerContext ctx) {
-                            ByteBuf buf = ctx.alloc().buffer();
-                            char c = '0';
+                        public void channelActive(ChannelHandlerContext ctx) throws Exception {
+                            log.debug("sending...");
                             Random r = new Random();
+                            char c = 'a';
+                            ByteBuf buffer = ctx.alloc().buffer();
                             for (int i = 0; i < 10; i++) {
-                                StringBuilder string = makeString(c, r.nextInt(256) + 1);
+                                for (int j = 1; j <= r.nextInt(16)+1; j++) {
+                                    buffer.writeByte((byte) c);
+                                }
+                                buffer.writeByte(10);
                                 c++;
-                                buf.writeBytes(string.toString().getBytes());
                             }
-                            ctx.writeAndFlush(buf);
+                            ctx.writeAndFlush(buffer);
                         }
                     });
                 }
             });
-            ChannelFuture channelFuture = bootstrap.connect("127.0.0.1", 6666).sync();
+            ChannelFuture channelFuture = bootstrap.connect("127.0.0.1", 6665).sync();
             channelFuture.channel().closeFuture().sync();
+
+        } catch (InterruptedException e) {
+            log.error("client error", e);
+        } finally {
+            worker.shutdownGracefully();
+        }
+
+}
+
+
+    /**
+     * #### 预设长度
+     * 在发送消息前，先约定用定长字节表示接下来数据的长度
+     */
+    @Test
+    public  void LengthFieldBaseSend() {
+        NioEventLoopGroup worker = new NioEventLoopGroup();
+        try {
+            Bootstrap bootstrap = new Bootstrap();
+            bootstrap.channel(NioSocketChannel.class);
+            bootstrap.group(worker);
+            bootstrap.handler(new ChannelInitializer<SocketChannel>() {
+                @Override
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    log.debug("connetted...");
+                    ch.pipeline().addLast(new LoggingHandler(LogLevel.DEBUG));
+                    ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+                        @Override
+                        public void channelActive(ChannelHandlerContext ctx) throws Exception {
+
+                            log.debug("sending...");
+                            Random r = new Random();
+                            char c = 'a';
+                            ByteBuf buffer = ctx.alloc().buffer();
+                            for (int i = 0; i < 10; i++) {
+                                byte length = (byte) (r.nextInt(16) + 1);
+                                // 先写入长度
+                                buffer.writeByte(length);
+                                // 再
+                                for (int j = 1; j <= length; j++) {
+                                    buffer.writeByte((byte) c);
+                                }
+                                c++;
+                            }
+                            ctx.writeAndFlush(buffer);
+                        }
+                    });
+                }
+            });
+            ChannelFuture channelFuture = bootstrap.connect("127.0.0.1", 6665).sync();
+            channelFuture.channel().closeFuture().sync();
+
         } catch (InterruptedException e) {
             log.error("client error", e);
         } finally {
@@ -97,7 +154,13 @@ public class HelloWorldClient {
 
     }
 
-    private static void send3() {
+
+    /**
+     * 让所有数据包长度固定（假设长度为 10 字节），服务器端加入
+     * FixedLengthFrameDecoder
+     */
+    @Test
+    public  void fixLengthSend() {
         NioEventLoopGroup worker = new NioEventLoopGroup();
         try {
             Bootstrap bootstrap = new Bootstrap();
@@ -124,7 +187,7 @@ public class HelloWorldClient {
                     });
                 }
             });
-            ChannelFuture channelFuture = bootstrap.connect("127.0.0.1", 6666).sync();
+            ChannelFuture channelFuture = bootstrap.connect("127.0.0.1", 6665).sync();
             channelFuture.channel().closeFuture().sync();
         } catch (InterruptedException e) {
             log.error("client error", e);
@@ -137,7 +200,7 @@ public class HelloWorldClient {
 
     //会产生粘包的代码
     @Test
-    public void test2() {
+    public  void errorSend() {
         try {
             ChannelFuture future = new Bootstrap()
                     .group(new NioEventLoopGroup())
@@ -155,13 +218,13 @@ public class HelloWorldClient {
                                         ByteBuf buffer = ctx.alloc().buffer(16);
                                         buffer.writeBytes(new byte[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15});
                                         ctx.writeAndFlush(buffer);
-                                        ctx.channel().close();
+                                     //   ctx.channel().close();
                                     }
                                 }
                             });
                         }
 
-                    }).connect(new InetSocketAddress("localhost", 6666));
+                    }).connect(new InetSocketAddress("localhost", 6665));
             future.channel().closeFuture().sync();
         } catch (InterruptedException e) {
             e.printStackTrace();
@@ -169,6 +232,9 @@ public class HelloWorldClient {
     }
 
 
+    /**
+     * 分10次发送，一次接收16个字节
+     */
     private static void send() {
         try {
             ChannelFuture future = new Bootstrap()
@@ -191,7 +257,7 @@ public class HelloWorldClient {
                             });
                         }
 
-                    }).connect(new InetSocketAddress("localhost", 6666));
+                    }).connect(new InetSocketAddress("localhost", 6665));
             future.channel().closeFuture().sync();
         } catch (InterruptedException e) {
             e.printStackTrace();
